@@ -1,26 +1,26 @@
 import pytest
 import vaex
-import vaex.webserver
+import vaex.server.tornado_server
 import numpy as np
 import contextlib
 
 import sys
-test_port = 29110 + sys.version_info[0] * 10 + sys.version_info[1]
+test_port = 3911 + sys.version_info[0] * 10 + sys.version_info[1]
 scheme = 'ws'
 
 
 class CallbackCounter(object):
-	def __init__(self, return_value=None):
-		self.counter = 0
-		self.return_value = return_value
-		self.last_args = None
-		self.last_kwargs = None
+    def __init__(self, return_value=None):
+        self.counter = 0
+        self.return_value = return_value
+        self.last_args = None
+        self.last_kwargs = None
 
-	def __call__(self, *args, **kwargs):
-		self.counter += 1
-		self.last_args = args
-		self.last_kwargs = kwargs
-		return self.return_value
+    def __call__(self, *args, **kwargs):
+        self.counter += 1
+        self.last_args = args
+        self.last_kwargs = kwargs
+        return self.return_value
 
 
 @contextlib.contextmanager
@@ -39,17 +39,17 @@ def small_buffer(ds, size=3):
 
 @pytest.fixture(scope='module')
 def webserver():
-    webserver = vaex.webserver.WebServer(datasets=[], port=test_port, cache_byte_size=0)
+    webserver = vaex.server.tornado_server.WebServer(datasets=[], port=test_port, cache_byte_size=0)
     webserver.serve_threaded()
     yield webserver
     webserver.stop_serving()
     #return webserver
 
 @pytest.fixture(scope='module')
-def server(webserver):
-    server = vaex.server("%s://localhost:%d" % (scheme, test_port))
-    yield server
-    server.close()
+def client(webserver):
+    client = vaex.connect("%s://localhost:%d" % (scheme, test_port))
+    yield client
+    client.close()
 
 @pytest.fixture()
 def ds_remote(webserver, client, ds_trimmed):

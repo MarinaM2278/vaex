@@ -25,13 +25,10 @@ def test_progress(progress):
     df.sum('x', progress=progress)
 
 
-# TODO: make it work with remote dataframe
-def test_progress(df_local):
-    df = df_local
-    x, y = df.sum([df.x, df.y])
+def test_progress(df):
+    x, y = df.sum([df.x, df.y], progress=True)
     counter = CallbackCounter(True)
     task = df.sum([df.x, df.y], delay=True, progress=counter)
-    # task.signal_progress.connect(counter)
     df.executor.execute()
     x2, y2 = task.get()
     assert x == x2

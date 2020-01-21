@@ -297,9 +297,9 @@ class DataFrame(object):
     def filtered(self):
         return self.has_selection(FILTER_SELECTION_NAME)
 
-    def map_reduce(self, map, reduce, arguments, progress=False, delay=False, info=False, ordered_reduce=False, to_numpy=True, ignore_filter=False, pre_filter=False, name='map reduce (custom)', selection=None):
+    def map_reduce(self, map, reduce, arguments, progress=False, delay=False, info=False, to_numpy=True, ignore_filter=False, pre_filter=False, name='map reduce (custom)', selection=None):
         # def map_wrapper(*blocks):
-        task = tasks.TaskMapReduce(self, arguments, map, reduce, info=info, ordered_reduce=ordered_reduce, to_numpy=to_numpy, ignore_filter=ignore_filter, selection=selection, pre_filter=pre_filter)
+        task = tasks.TaskMapReduce(self, arguments, map, reduce, info=info, to_numpy=to_numpy, ignore_filter=ignore_filter, selection=selection, pre_filter=pre_filter)
         progressbar = vaex.utils.progressbars(progress)
         progressbar.add_task(task, name)
         self.executor.schedule(task)
@@ -600,7 +600,7 @@ class DataFrame(object):
         @delayed
         def finish(counts):
             counts = np.array(counts)
-            counts = counts[...,0]
+            counts = counts[..., 0]
             return counts
         return finish(task)
 
@@ -623,11 +623,11 @@ class DataFrame(object):
     @delayed
     def _count_calculation(self, expression, grid, selection, edges, progressbar):
         if expression in ["*", None]:
-            agg = vaex.agg.count()
+            agg = vaex.agg.count(selection=selection, edges=edges)
         else:
-            agg = vaex.agg.count(expression)
+            agg = vaex.agg.count(expression, selection=selection, edges=edges)
         task = self._get_task_agg(grid)
-        agg_subtask = task.add_aggregation_operation(agg, selection, edges=edges)
+        agg_subtask = task.add_aggregation_operation(agg)
         progressbar.add_task(task, "count for %s" % expression)
         @delayed
         def finish(counts):
@@ -654,21 +654,23 @@ class DataFrame(object):
             # support. df.dtype() needs to call evaluate with filtering enabled since we consider
             # it invalid that expressions are evaluate with filtered data. Sklearn for instance may
             # give errors when evaluated with NaN's present.
+            # TODO: GET RID OF THIS
             len(self) # fill caches and masks
+            # pass
         grid = self._create_grid(binby, limits, shape, delay=True)
         @delayed
         def compute(expression, grid, selection, edges, progressbar):
             self._aggregator_nest_count += 1
             try:
                 if expression in ["*", None]:
-                    agg = vaex.agg.aggregates[name](selection=selection)
+                    agg = vaex.agg.aggregates[name](selection=selection, edges=edges)
                 else:
                     if extra_expressions:
-                        agg = vaex.agg.aggregates[name](expression, *extra_expressions, selection=selection)
+                        agg = vaex.agg.aggregates[name](expression, *extra_expressions, selection=selection, edges=edges)
                     else:
-                        agg = vaex.agg.aggregates[name](expression, selection=selection)
+                        agg = vaex.agg.aggregates[name](expression, selection=selection, edges=edges)
                 task = self._get_task_agg(grid)
-                agg_subtask = agg.add_operations(task, edges=edges)
+                agg_subtask = agg.add_operations(task)
                 progressbar.add_task(task, "%s for %s" % (name, expression))
                 @delayed
                 def finish(counts):
@@ -1034,6 +1036,8 @@ class DataFrame(object):
             # print xlist, ylist
         else:
             waslist, [xlist, ylist] = vaex.utils.listify(x, y)
+        xlist = _ensure_strings_from_expressions(xlist)
+        ylist = _ensure_strings_from_expressions(ylist)
         limits = self.limits(binby, limits, selection=selection, delay=True)
 
         @delayed
@@ -2024,8 +2028,11 @@ class DataFrame(object):
             return np.float64(1).dtype
         elif expression in self.columns.keys():
             column = self.columns[expression]
-            data = column[0:1]
-            dtype = data.dtype
+            if hasattr(column, 'dtype'):
+                dtype = column.dtype
+            else:
+                data = column[0:1]
+                dtype = data.dtype
         else:
             try:
                 data = self.evaluate(expression, 0, 1, filtered=False, internal=True, parallel=False)
@@ -2517,60 +2524,6 @@ class DataFrame(object):
     def option_to_args(cls, option):
         return []
 
-    @_hidden
-    def subspace(self, *expressions, **kwargs):
-        """Return a :class:`Subspace` for this DataFrame with the given expressions:
-
-        Example:
-
-        >>> subspace_xy = some_df("x", "y")
-
-        :rtype: Subspace
-        :param list[str] expressions: list of expressions
-        :param kwargs:
-        :return:
-        """
-        return self(*expressions, **kwargs)
-
-    @_hidden
-    def subspaces(self, expressions_list=None, dimensions=None, exclude=None, **kwargs):
-        """Generate a Subspaces object, based on a custom list of expressions or all possible combinations based on
-        dimension
-
-        :param expressions_list: list of lists of expressions, where the inner list defines the subspace
-        :param dimensions: if given, generates a subspace with all possible combinations for that dimension
-        :param exclude: list of
-        """
-        if dimensions is not None:
-            expressions_list = list(itertools.combinations(self.get_column_names(), dimensions))
-            if exclude is not None:
-                import six
-
-                def excluded(expressions):
-                    if callable(exclude):
-                        return exclude(expressions)
-                    elif isinstance(exclude, six.string_types):
-                        return exclude in expressions
-                    elif isinstance(exclude, (list, tuple)):
-                        # $#expressions = set(expressions)
-                        for e in exclude:
-                            if isinstance(e, six.string_types):
-                                if e in expressions:
-                                    return True
-                            elif isinstance(e, (list, tuple)):
-                                if set(e).issubset(expressions):
-                                    return True
-                            else:
-                                raise ValueError("elements of exclude should contain a string or a sequence of strings")
-                    else:
-                        raise ValueError("exclude should contain a string, a sequence of strings, or should be a callable")
-                    return False
-                # test if any of the elements of exclude are a subset of the expression
-                expressions_list = [expr for expr in expressions_list if not excluded(expr)]
-            logger.debug("expression list generated: %r", expressions_list)
-        import vaex.legacy
-        return vaex.legacy.Subspaces([self(*expressions, **kwargs) for expressions in expressions_list])
-
     def combinations(self, expressions_list=None, dimension=2, exclude=None, **kwargs):
         """Generate a list of combinations for the possible expressions for the given dimension.
 
@@ -2606,12 +2559,6 @@ class DataFrame(object):
                 expressions_list = [expr for expr in expressions_list if not excluded(expr)]
             logger.debug("expression list generated: %r", expressions_list)
         return expressions_list
-
-    @vaex.utils.deprecated('legacy system')
-    @_hidden
-    def __call__(self, *expressions, **kwargs):
-        """Alias/shortcut for :func:`DataFrame.subspace`"""
-        raise NotImplementedError
 
     def set_variable(self, name, expression_or_value, write=True):
         """Set the variable to an expression or value defined by expression_or_value.
@@ -3278,10 +3225,10 @@ class DataFrame(object):
         self.column_names.append(new)
         for key, value in self.selection_histories.items():
             self.selection_histories[key] = list([k if k is None else k._rename(self, old, new) for k in value])
-        if hasattr(self, name):
+        if hasattr(self, old):
             try:
-                if isinstance(getattr(self, name), Expression):
-                    delattr(self, name)
+                if isinstance(getattr(self, old), Expression):
+                    delattr(self, old)
             except:
                 pass
         self._save_assign_expression(new)
@@ -5734,7 +5681,7 @@ class DataFrameLocal(DataFrame):
 
     def _get_task_agg(self, grid):
         if grid not in self._task_aggs:
-            self._task_aggs[grid] = task = vaex.tasks.TaskAggregate(self, grid)
+            self._task_aggs[grid] = task = vaex.tasks.TaskAggregations(self, grid)
             self.executor.schedule(task)
         return self._task_aggs[grid]
 
