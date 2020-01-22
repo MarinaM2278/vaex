@@ -8,7 +8,6 @@ def test_delayed(df_local, client):
     xmax = df.x.max()
     df_remote = client.get('test')
     passes = df_local.executor.passes
-    print(" = " * 30)
     assert df_remote.x.min() == xmin
     assert df_local.executor.passes == passes + 1
 

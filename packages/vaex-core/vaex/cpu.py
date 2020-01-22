@@ -334,7 +334,6 @@ class TaskPartAggregations:
             else:
                 binner.set_data(block)
                 references.extend([block])
-            print("bin block data", block, block.dtype)
         all_aggregators = []
         for agg_desc, selections, aggregation2d, selection_waslist in self.aggregations:
             for selection_index, selection in enumerate(selections):
@@ -353,7 +352,6 @@ class TaskPartAggregations:
                     block = block_map[agg_desc.expressions[0]].dtype
                     for i, expression in enumerate(agg_desc.expressions):
                         block = block_map[agg_desc.expressions[i]]
-                        print("data", block, "for", agg_desc)
                         dtype = self.dtypes[agg_desc.expressions[i]]
                         # we have data for the aggregator as well
                         if np.ma.isMaskedArray(block):
@@ -370,7 +368,6 @@ class TaskPartAggregations:
                             block = check_array(block, dtype)
                             agg.set_data(block, i)
                             references.extend([block])
-                        print("data check", block, "for", agg_desc)
                 # we only have 1 data mask, since it's locally combined
                 if selection_mask is not None:
                     agg.set_data_mask(selection_mask)
@@ -378,7 +375,6 @@ class TaskPartAggregations:
         N = i2 - i1
         if filter_mask is not None:
             N = filter_mask.astype(np.uint8).sum()
-        print(references)
         grid.bin(all_aggregators, N)
 
     def reduce(self, others):
@@ -386,7 +382,6 @@ class TaskPartAggregations:
             for selection_index, selection in enumerate(selections):
                 agg0 = aggregation[selection_index]
                 aggs = [other.aggregations[agg_index][2][selection_index] for other in others]
-                print("reduce", aggs)
                 agg0.reduce(aggs)
 
     def get_result(self):

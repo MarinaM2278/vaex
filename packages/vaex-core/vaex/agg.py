@@ -236,7 +236,6 @@ class AggregatorDescriptorStd(AggregatorDescriptorVar):
 @register
 def count(expression='*', selection=None, edges=False):
     '''Creates a count aggregation'''
-    print('count', edges)
     return AggregatorDescriptorBasic('AggCount', expression, 'count', selection=selection, edges=edges)
 
 @register
