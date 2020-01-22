@@ -74,19 +74,29 @@ class vaex_evaluate_results_encoding:
 class ndarray_encoding:
     @classmethod
     def encode(cls, encoding, array):
-        if array.dtype.kind == 'O':
-            raise ValueError('Numpy arrays with objects cannot be serialized: %r' % array)
+        # if array.dtype.kind == 'O':
+        #     raise ValueError('Numpy arrays with objects cannot be serialized: %r' % array)
         mask = None
+        dtype = array.dtype
         if np.ma.isMaskedArray(array):
             values = array.data
             mask = array.mask
         else:
             values = array
-        data = {
-                'values': encoding.add_blob(values),
-                'shape': array.shape,
-                'dtype': encoding.encode('dtype', array.dtype)
-        }
+        if values.dtype.kind in 'mM':
+            values = values.view(np.uint64)
+        if values.dtype.kind == 'O':
+            data = {
+                    'values': values.tolist(),  # rely on json encoding
+                    'shape': array.shape,
+                    'dtype': encoding.encode('dtype', dtype)
+            }
+        else:
+            data = {
+                    'values': encoding.add_blob(values),
+                    'shape': array.shape,
+                    'dtype': encoding.encode('dtype', dtype)
+            }
         if mask is not None:
             data['mask'] = encoding.add_blob(mask)
         return data
@@ -96,10 +106,14 @@ class ndarray_encoding:
         if isinstance(result_encoded, (list, tuple)):
             return [cls.decode(encoding, k) for k in result_encoded]
         else:
-            data = encoding.get_blob(result_encoded['values'])
             dtype = encoding.decode('dtype', result_encoded['dtype'])
             shape = result_encoded['shape']
-            array = np.frombuffer(data, dtype=dtype).reshape(shape)
+            if dtype.kind == 'O':
+                data = result_encoded['values']
+                array = np.array(data, dtype=dtype)
+            else:
+                data = encoding.get_blob(result_encoded['values'])
+                array = np.frombuffer(data, dtype=dtype).reshape(shape)
             if 'mask' in result_encoded:
                 mask_data = encoding.get_blob(result_encoded['mask'])
                 mask_array = np.frombuffer(mask_data, dtype=np.bool_).reshape(shape)
