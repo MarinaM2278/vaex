@@ -68,9 +68,9 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                     (self.webserver.token_trusted and token_trusted == self.webserver.token_trusted)):
                 raise ValueError('No token provided, not authorized')
 
-            last_progress = 0
+            last_progress = None
 
-            def progress(f):
+            def progress(f, from_current_ioloop=False):
                 nonlocal last_progress
 
                 def do():
@@ -78,8 +78,13 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                     logger.debug("progress: %r", f)
                     last_progress = f
                     self.write_json({'msg_id': msg_id, 'msg': {'progress': f}})
-                if last_progress is None or (f - last_progress) > 0.05 or f == 1.0:
-                    self.webserver.ioloop.add_callback(do)
+                # emit when it's the first time (None), at least 0.05 sec lasted, or and the end
+                # but never send old or same values
+                if (last_progress is None or (f - last_progress) > 0.05 or f == 1.0) and (last_progress is None or f > last_progress):
+                    if from_current_ioloop:
+                        do()
+                    else:
+                        self.webserver.ioloop.add_callback(do)
                 return True
 
             command = msg['command']
@@ -91,7 +96,8 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 df.state_set(msg['state'], use_active_range=True, trusted=trusted)
                 tasks = encoding.decode_list('task', msg['tasks'], df=df)
                 results = yield self.service.execute(df, tasks, progress=progress)
-                progress(1)
+                last_progress = 1
+                progress(1, from_current_ioloop=True)
                 encoding = Encoding()
                 # results = [[k.tolist() for k in kk] for kk in results]
                 results = encoding.encode_list('vaex-task-result', results)
