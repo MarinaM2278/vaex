@@ -72,7 +72,7 @@ jobs:
       if: steps.cache-compiled-binaries.outputs.cache-hit == 'true'
       shell: bash
       run: |
-        find packages/vaex-core/build -type f -exec "touch {} +"
+        find packages/vaex-core/build -type f -exec touch {} +
     - name: Install vaex (Windows)
       if: matrix.os == 'windows-latest'
       shell: bash
