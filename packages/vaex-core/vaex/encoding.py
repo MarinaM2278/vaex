@@ -1,8 +1,14 @@
+"""Private module that determines how data is encoded and serialized, to be able to send it over a wire, or save to disk"""
+
+import base64
+import io
 import json
+import numbers
+import uuid
+import struct
 
 import numpy as np
 
-from .json import VaexJsonDecoder, VaexJsonEncoder
 import vaex
 
 registry = {}
@@ -14,6 +20,91 @@ def register(name):
         registry[name] = cls
         return cls
     return wrapper
+
+
+@register("json")  # this will pass though data as is
+class vaex_json_encoding:
+    @classmethod
+    def encode(cls, encoding, result):
+        return result
+
+    @classmethod
+    def decode(cls, encoding, result_encoded):
+        return result_encoded
+
+
+@register("vaex-task-result")
+class vaex_task_result_encoding:
+    @classmethod
+    def encode(cls, encoding, result):
+        return encoding.encode('vaex-evaluate-result', result)
+
+    @classmethod
+    def decode(cls, encoding, result_encoded):
+        return encoding.decode('vaex-evaluate-result', result_encoded)
+
+
+@register("vaex-evaluate-result")
+class vaex_evaluate_results_encoding:
+    @classmethod
+    def encode(cls, encoding, result):
+        if isinstance(result, (list, tuple)):
+            return [cls.encode(encoding, k) for k in result]
+        else:
+            if isinstance(result, np.ndarray):
+                return {'type': 'ndarray', 'data': encoding.encode('ndarray', result)}
+            elif isinstance(result, numbers.Number):
+                try:
+                    result = result.item()  # for numpy scalars
+                except:  # noqa
+                    pass
+                return {'type': 'json', 'data': result}
+            else:
+                raise ValueError('Cannot encode: %r' % result)
+
+    @classmethod
+    def decode(cls, encoding, result_encoded):
+        if isinstance(result_encoded, (list, tuple)):
+            return [cls.decode(encoding, k) for k in result_encoded]
+        else:
+            return encoding.decode(result_encoded['type'], result_encoded['data'])
+
+
+@register("ndarray")
+class ndarray_encoding:
+    @classmethod
+    def encode(cls, encoding, array):
+        if array.dtype.kind == 'O':
+            raise ValueError('Numpy arrays with objects cannot be serialized: %r' % array)
+        mask = None
+        if np.ma.isMaskedArray(array):
+            values = array.data
+            mask = array.mask
+        else:
+            values = array
+        data = {
+                'values': encoding.add_blob(values),
+                'shape': array.shape,
+                'dtype': encoding.encode('dtype', array.dtype)
+        }
+        if mask is not None:
+            data['mask'] = encoding.add_blob(mask)
+        return data
+
+    @classmethod
+    def decode(cls, encoding, result_encoded):
+        if isinstance(result_encoded, (list, tuple)):
+            return [cls.decode(encoding, k) for k in result_encoded]
+        else:
+            data = encoding.get_blob(result_encoded['values'])
+            dtype = encoding.decode('dtype', result_encoded['dtype'])
+            shape = result_encoded['shape']
+            array = np.frombuffer(data, dtype=dtype).reshape(shape)
+            if 'mask' in result_encoded:
+                mask_data = encoding.get_blob(result_encoded['mask'])
+                mask_array = np.frombuffer(mask_data, dtype=np.bool_).reshape(shape)
+                array = np.ma.array(array, mask=mask_array)
+            return array
 
 
 @register("dtype")
@@ -36,7 +127,7 @@ class dtype_encoding:
 
 
 @register("binner")
-class grid_encoding:
+class binner_encoding:
     @staticmethod
     def encode(encoding, binner):
         name = type(binner).__name__
@@ -83,9 +174,7 @@ class grid_encoding:
 class Encoding:
     def __init__(self, next=None):
         self.registry = {**registry}
-        # self.next = None
-        self.buffers = []
-        self.buffer_paths = []
+        self.blobs = {}
 
     def encode(self, typename, value):
         encoded = self.registry[typename].encode(self, value)
@@ -94,7 +183,7 @@ class Encoding:
     def encode_list(self, typename, values):
         encoded = [self.registry[typename].encode(self, k) for k in values]
         return encoded
-    
+
     def encode_dict(self, typename, values):
         encoded = {key: self.registry[typename].encode(self, value) for key, value in values.items()}
         return encoded
@@ -111,11 +200,75 @@ class Encoding:
         decoded = {key: self.registry[typename].decode(self, value, **kwargs) for key, value in values.items()}
         return decoded
 
+    def add_blob(self, buffer):
+        blob_id = str(uuid.uuid4())
+        self.blobs[blob_id] = memoryview(buffer).tobytes()
+        return f'blob:{blob_id}'
+
+    def get_blob(self, blob_ref):
+        assert blob_ref.startswith('blob:')
+        blob_id = blob_ref[5:]
+        return self.blobs[blob_id]
 
 
-def serialize(data, encoding):
-    return json.dumps(data, indent=2, cls=VaexJsonEncoder)
+class inline:
+    @staticmethod
+    def serialize(data, encoding):
+        import base64
+        blobs = {key: base64.b64encode(value).decode('ascii') for key, value in encoding.blobs.items()}
+        return json.dumps({'data': data, 'blobs': blobs})
+
+    @staticmethod
+    def deserialize(data, encoding):
+        data = json.loads(data)
+        encoding.blobs = {key: base64.b64decode(value.encode('ascii')) for key, value in data['blobs'].items()}
+        return data['data']
 
 
-def deserialize(data, encoding):
-    return json.loads(data, cls=VaexJsonDecoder)
+def _pack_blobs(*blobs):
+    count = len(blobs)
+    lenghts = [len(blob) for blob in blobs]
+    stream = io.BytesIO()
+    # header: <number of blobs>,<offset 0>, ... <offset N-1> with 8 byte unsigned ints
+    header_length = 8 * (2 + count)
+    offsets = (np.cumsum([0] + lenghts) + header_length).tolist()
+    stream.write(struct.pack(f'{count+2}q', count, *offsets))
+    for blob in blobs:
+        stream.write(blob)
+    bytes = stream.getvalue()
+    assert offsets[-1] == len(bytes)
+    return bytes
+
+
+def _unpack_blobs(bytes):
+    stream = io.BytesIO(bytes)
+
+    count, = struct.unpack('q', stream.read(8))
+    offsets = struct.unpack(f'{count+1}q', stream.read(8 * (count + 1)))
+    assert offsets[-1] == len(bytes)
+    blobs = []
+    for i1, i2 in zip(offsets[:-1], offsets[1:]):
+        blobs.append(bytes[i1:i2])
+    return blobs
+
+
+class binary:
+    @staticmethod
+    def serialize(data, encoding):
+        blob_refs = list(encoding.blobs.keys())
+        blobs = [encoding.blobs[k] for k in blob_refs]
+        json_blob = json.dumps({'data': data, 'blob_refs': blob_refs})
+        return _pack_blobs(json_blob.encode('utf8'), *blobs)
+
+    @staticmethod
+    def deserialize(data, encoding):
+        json_data, *blobs = _unpack_blobs(data)
+        json_data = json_data.decode('utf8')
+        json_data = json.loads(json_data)
+        data = json_data['data']
+        encoding.blobs = {key: blob for key, blob in zip(json_data['blob_refs'], blobs)}
+        return data
+
+
+serialize = binary.serialize
+deserialize = binary.deserialize

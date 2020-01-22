@@ -92,13 +92,19 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 tasks = encoding.decode_list('task', msg['tasks'], df=df)
                 results = yield self.service.execute(df, tasks, progress=progress)
                 progress(1)
-                results = [[k.tolist() for k in kk] for kk in results]
-                self.write_json({'msg_id': msg_id, 'msg': {'result': results}})
+                encoding = Encoding()
+                # results = [[k.tolist() for k in kk] for kk in results]
+                results = encoding.encode_list('vaex-task-result', results)
+                self.write_json({'msg_id': msg_id, 'msg': {'result': results}}, encoding)
             elif command == 'evaluate':
                 df = self.service[msg['df']].copy()
                 df.state_set(msg['state'], use_active_range=True, trusted=trusted)
+                # TODO: yield
                 results = self.service.evaluate(df, msg['args'], msg['kwargs'])
-                self.write_json({'msg_id': msg_id, 'msg': {'result': results}})
+                encoding = Encoding()
+                print(results)
+                results = encoding.encode('vaex-evaluate-result', results)
+                self.write_json({'msg_id': msg_id, 'msg': {'result': results}}, encoding)
             else:
                 raise ValueError(f'Unknown command: {command}')
 
@@ -107,10 +113,10 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
             msg = exception(e)
             self.write_json({'msg_id': msg_id, 'msg': msg})
 
-    def write_json(self, msg):
-        encoding = Encoding()
+    def write_json(self, msg, encoding=None):
+        encoding = encoding or Encoding()
         logger.debug("writing json: %r", msg)
-        self.write_message(serialize(msg, encoding) + "\n", binary=True)
+        self.write_message(serialize(msg, encoding), binary=True)
 
     def on_close(self):
         logger.debug("WebSocket closed")
@@ -196,7 +202,7 @@ class WebServer(threading.Thread):
         self.server = HTTPServer(self.application)
         try:
             self.server.listen(self.port, self.address)
-        except:
+        except:  # noqa
             self.started.set()
             raise
         self.started.set()

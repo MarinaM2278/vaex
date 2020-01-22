@@ -41,12 +41,15 @@ class Client:
 
     def _list(self):
         msg = {'command': 'list'}
-        return self._send(msg)
+        reply, encoding = self._send(msg)
+        return reply
 
     def evaluate(self, df, args, kwargs):
         args = [str(k) if isinstance(k, vaex.expression.Expression) else k for k in args]
         msg = {'command': 'evaluate', 'df': df.name, 'state': df.state_get(), 'args': args, 'kwargs': kwargs}
-        return self._send(msg)
+        result, encoding = self._send(msg)
+        result = encoding.decode('vaex-evaluate-result', result)
+        return result
 
     def execute(self, df, tasks):
         from vaex.encoding import Encoding
@@ -56,6 +59,8 @@ class Client:
         task_specs = encoder.encode_list("task", tasks)
         msg = {'command': 'execute', 'df': df.name, 'state': df.state_get(), 'tasks': task_specs}
         try:
-            return self._send(msg, msg_id=msg_id)
+            results, encoding = self._send(msg, msg_id=msg_id)
+            results = encoding.decode_list('vaex-task-result', results)
+            return results
         finally:
             del self._msg_id_to_tasks[msg_id]

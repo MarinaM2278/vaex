@@ -1,5 +1,4 @@
 import builtins
-import json
 import logging
 import threading
 from urllib.parse import urlparse
@@ -9,19 +8,10 @@ import tornado.websocket
 
 import vaex
 from vaex.utils import wrap_future_with_promise
-from vaex.json import VaexJsonDecoder, VaexJsonEncoder
 from vaex.server import client
 from .executor import Executor
 
 logger = logging.getLogger("vaex.server.tornado")
-
-
-def serialize(data):
-    return json.dumps(data, indent=2, cls=VaexJsonEncoder)
-
-
-def deserialize(data):
-    return json.loads(data, cls=VaexJsonDecoder)
 
 
 class Client(client.Client):
@@ -88,13 +78,15 @@ class ClientWebsocket(Client):
             msg_id = str(uuid.uuid4())
         self.msg_reply_promises[msg_id] = vaex.promise.Promise()
         auth = {'token': self.token, 'token-trusted': self.token_trusted}
-        data = serialize({'msg_id': msg_id, 'msg': msg, 'auth': auth})
+
+        msg_encoding = vaex.encoding.Encoding()
+        data = vaex.encoding.serialize({'msg_id': msg_id, 'msg': msg, 'auth': auth}, msg_encoding)
 
         def do():
-            self.websocket.write_message(data)
+            self.websocket.write_message(data, binary=True)
         self.io_loop.add_callback(do)  # make sure it gets executed from the right thread
-        reply = self.msg_reply_promises[msg_id].get()
-        return reply['result']
+        reply_msg, reply_encoding = self.msg_reply_promises[msg_id].get()
+        return reply_msg['result'], reply_encoding
 
     def close(self):
         self.websocket.close()
@@ -103,9 +95,10 @@ class ClientWebsocket(Client):
         if websocket_msg is None:
             return
         logger.debug("websocket msg: %r", websocket_msg)
-        websocket_msg = deserialize(websocket_msg)
-        msg_id, msg = websocket_msg['msg_id'], websocket_msg['msg']
         try:
+            encoding = vaex.encoding.Encoding()
+            websocket_msg = vaex.encoding.deserialize(websocket_msg, encoding)
+            msg_id, msg = websocket_msg['msg_id'], websocket_msg['msg']
             if 'progress' in msg:
                 fraction = msg['progress']
                 for task in self._msg_id_to_tasks.get(msg_id, ()):
@@ -120,7 +113,7 @@ class ClientWebsocket(Client):
                 exception = getattr(builtins, class_name)(msg)
                 self.msg_reply_promises[msg_id].reject(exception)
             else:
-                self.msg_reply_promises[msg_id].fulfill(msg)
+                self.msg_reply_promises[msg_id].fulfill((msg, encoding))
         except Exception as e:
             logger.exception("Exception interpreting msg reply: %r", websocket_msg)
             self.msg_reply_promises[msg_id].reject(e)
