@@ -49,10 +49,10 @@ class DataFrameRemote(DataFrameLocal):
         # return (rows,) + sample.shape[1:]
 
     def dtype(self, expression, internal=False):
-        if expression in self._dtypes:
-            return self._dtypes[expression]
+        if str(expression) in self._dtypes:
+            return self._dtypes[str(expression)]
         else:
-            return np.zeros(1, dtype=np.float64).dtype
+            return super().dtype(expression)
 
     # TODO: would be nice to get some info on the remote dataframe
     # def __repr__(self):

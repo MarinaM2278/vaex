@@ -71,6 +71,9 @@ public:
         if(info.ndim != 1) {
             throw std::runtime_error("Expected a 1d array");
         }
+        if(info.itemsize != sizeof(T)) {
+            throw std::runtime_error("Itemsize of data and binner are not equal");
+        }
         this->ptr = (T*)info.ptr;
         this->_size = info.shape[0];
     }
@@ -149,6 +152,9 @@ public:
         py::buffer_info info = ar.request();
         if(info.ndim != 1) {
             throw std::runtime_error("Expected a 1d array");
+        }
+        if(info.itemsize != sizeof(T)) {
+            throw std::runtime_error("Itemsize of data and binner are not equal");
         }
         this->ptr = (T*)info.ptr;
         this->_size = info.shape[0];
