@@ -44,6 +44,17 @@ class vaex_task_result_encoding:
         return encoding.decode('vaex-evaluate-result', result_encoded)
 
 
+@register("vaex-rmi-result")
+class vaex_rmi_result_encoding:
+    @classmethod
+    def encode(cls, encoding, result):
+        return encoding.encode('json', result)
+
+    @classmethod
+    def decode(cls, encoding, result_encoded):
+        return encoding.decode('json', result_encoded)
+
+
 @register("vaex-evaluate-result")
 class vaex_evaluate_results_encoding:
     @classmethod

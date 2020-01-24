@@ -6,6 +6,22 @@ from .dataframe import DataFrame, DataFrameLocal
 
 
 logger = logging.getLogger("vaex.remote")
+allowed_method_names = []
+
+
+# remote method invokation
+def _rmi(f=None):
+    def decorator(method):
+        method_name = method.__name__
+        allowed_method_names.append(method_name)
+
+        def wrapper(df, *args, **kwargs):
+            return df.executor._rmi(df, method_name, args, kwargs)
+        return wrapper
+    if f is None:
+        return decorator
+    else:
+        return decorator(f)
 
 
 # TODO: we should not inherit from local
@@ -38,8 +54,17 @@ class DataFrameRemote(DataFrameLocal):
         # can we get away with not trimming?
         return df
 
+    @_rmi
     def _evaluate_implementation(self, *args, **kwargs):
-        return self.executor.evaluate(self, args, kwargs)
+        pass
+
+    @_rmi
+    def _repr_mimebundle_(self, *args, **kwargs):
+        pass
+
+    @_rmi
+    def _head_and_tail_table(self, *args, **kwargs):
+        pass
 
     def _shape_of(self, expression, filtered=True):
         # sample = self.evaluate(expression, 0, 1, filtered=False, internal=True, parallel=False)

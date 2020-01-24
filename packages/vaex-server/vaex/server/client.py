@@ -44,11 +44,14 @@ class Client:
         reply, encoding = self._send(msg)
         return reply
 
-    def evaluate(self, df, args, kwargs):
+    def _rmi(self, df, methodname, args, kwargs):
         args = [str(k) if isinstance(k, vaex.expression.Expression) else k for k in args]
-        msg = {'command': 'evaluate', 'df': df.name, 'state': df.state_get(), 'args': args, 'kwargs': kwargs}
+        msg = {'command': 'call-dataframe', 'method': methodname, 'df': df.name, 'state': df.state_get(), 'args': args, 'kwargs': kwargs}
         result, encoding = self._send(msg)
-        result = encoding.decode('vaex-evaluate-result', result)
+        if msg['method'] == "_evaluate_implementation":
+            result = encoding.decode('vaex-evaluate-result', result)
+        else:
+            result = encoding.decode('vaex-rmi-result', result)
         return result
 
     def execute(self, df, tasks):

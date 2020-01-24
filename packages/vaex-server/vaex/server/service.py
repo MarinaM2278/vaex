@@ -28,8 +28,9 @@ class Service:
                     } for name, df in self.df_map.items()
                 }
 
-    def evaluate(self, df, args, kwargs):
-        return df.evaluate(*args, **kwargs)
+    def _rmi(self, df, methodname, args, kwargs):
+        method = getattr(df, methodname)
+        return method(*args, **kwargs)
 
     def execute(self, df, tasks):
         assert df.executor.task_queue == []
@@ -52,8 +53,8 @@ class Proxy:
     def list(self):
         return self.service.list()
 
-    def evaluate(self, df, args, kwargs):
-        return self.service.evaluate(df, args, kwargs)
+    def _rmi(self, df, methodname, args, kwargs):
+        return self.service._rmi(df, methodname, args, kwargs)
 
 
 class AsyncThreadedService(Proxy):

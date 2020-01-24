@@ -22,6 +22,7 @@ import sys
 
 from vaex.encoding import serialize, deserialize, Encoding
 import vaex.server.service
+import vaex.remote
 
 
 logger = logging.getLogger("vaex.webserver")
@@ -102,14 +103,19 @@ class WebSocketHandler(tornado.websocket.WebSocketHandler):
                 # results = [[k.tolist() for k in kk] for kk in results]
                 results = encoding.encode_list('vaex-task-result', results)
                 self.write_json({'msg_id': msg_id, 'msg': {'result': results}}, encoding)
-            elif command == 'evaluate':
+            elif command == 'call-dataframe':
                 df = self.service[msg['df']].copy()
                 df.state_set(msg['state'], use_active_range=True, trusted=trusted)
                 # TODO: yield
-                results = self.service.evaluate(df, msg['args'], msg['kwargs'])
+                if msg['method'] not in vaex.remote.allowed_method_names:
+                    raise NotImplementedError("Method is not rmi invokable")
+                results = self.service._rmi(df, msg['method'], msg['args'], msg['kwargs'])
                 encoding = Encoding()
                 print(results)
-                results = encoding.encode('vaex-evaluate-result', results)
+                if msg['method'] == "_evaluate_implementation":
+                    results = encoding.encode('vaex-evaluate-result', results)
+                else:
+                    results = encoding.encode('vaex-rmi-result', results)
                 self.write_json({'msg_id': msg_id, 'msg': {'result': results}}, encoding)
             else:
                 raise ValueError(f'Unknown command: {command}')

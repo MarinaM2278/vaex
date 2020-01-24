@@ -7,9 +7,9 @@ class Executor:
     def schedule(self, task):
         self.tasks.append(task)
 
-    def evaluate(self, df, args, kwargs):
+    def _rmi(self, df, methodname, args, kwargs):
         # TODO: turn evaluate into a task
-        return self.client.evaluate(df, args, kwargs)
+        return self.client._rmi(df, methodname, args, kwargs)
 
     def execute(self):
         tasks = list(self.tasks)
